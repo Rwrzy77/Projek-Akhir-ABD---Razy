@@ -1,0 +1,24 @@
+# Core
+pandas
+numpy
+
+# Dashboard
+streamlit
+plotly
+
+# Database
+pymongo
+
+# Big Data
+pyspark
+
+# Kafka Streaming
+kafka-python
+
+# Scraping (optional — untuk re-scrape data)
+selenium
+webdriver-manager
+beautifulsoup4
+undetected-chromedriver
+tqdm
+requests
