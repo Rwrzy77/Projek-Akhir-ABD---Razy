@@ -1,16 +1,5 @@
 # scrap_indeed.py
-"""Scraper for Indeed IT job listings (Indonesia) – menggunakan Selenium + undetected-chromedriver.
-
-Kenapa undetected-chromedriver?
-  - Indeed menerapkan proteksi Cloudflare/bot-detection sehingga request biasa (requests)
-    dikembalikan dengan HTTP 403 "Security Check".
-  - undetected-chromedriver menjalankan Chrome asli yang dimodifikasi agar tidak
-    terdeteksi sebagai bot.
-
-Kebutuhan:
-  - Google Chrome harus sudah terinstall di komputer.
-  - pip install undetected-chromedriver selenium tqdm beautifulsoup4
-"""
+"""Indeed IT job scraper using undetected-chromedriver to bypass Cloudflare protection."""
 
 import csv
 import random
@@ -20,6 +9,7 @@ from typing import Dict, List
 
 from bs4 import BeautifulSoup
 from tqdm import tqdm
+from kafka_helper import get_kafka_producer, publish_scraped_job
 
 try:
     import undetected_chromedriver as uc
@@ -28,9 +18,7 @@ except ImportError:
     HAS_UC = False
     print("[WARN] undetected-chromedriver tidak ditemukan. Jalankan: pip install undetected-chromedriver")
 
-# ---------------------------------------------------------------------------
-# Konfigurasi – ubah sesuai kebutuhan
-# ---------------------------------------------------------------------------
+# Configuration
 KEYWORDS = [
     "Software Engineer", "Backend Developer", "Frontend Developer", "Fullstack Developer",
     "Web Developer", "Mobile Developer", "Android Developer", "iOS Developer",
@@ -67,8 +55,7 @@ LOCATION = "Worldwide"
 PAGES_PER_KW = 1
 MAX_SCROLLS = 30
 OUTPUT_CSV = "data_indeed_it_jobs.csv"
-HEADLESS   = False       # Set True untuk mode headless (tanpa tampilan browser)
-                         # Disarankan False agar lebih sulit terdeteksi
+HEADLESS   = False       # Set True for headless mode (False is recommended to avoid detection)
 
 FIELDNAMES = [
     "job_title", "company_name", "location", "country",
@@ -78,9 +65,7 @@ FIELDNAMES = [
     "platform", "remote_flag",
 ]
 
-# ---------------------------------------------------------------------------
 # Setup driver
-# ---------------------------------------------------------------------------
 def get_driver():
     """Buat Chrome driver dengan undetected-chromedriver."""
     if not HAS_UC:
@@ -90,14 +75,13 @@ def get_driver():
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--lang=en-US")
-    # Random User-Agent to reduce detection
+    # Random user-agent and window size
     ua_list = [
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     ]
     options.add_argument(f"user-agent={random.choice(ua_list)}")
-    # Randomize viewport sedikit agar terasa lebih natural
     w = random.randint(1200, 1400)
     h = random.randint(800, 950)
     options.add_argument(f"--window-size={w},{h}")
@@ -107,9 +91,7 @@ def get_driver():
     driver = uc.Chrome(options=options, use_subprocess=True)
     return driver
 
-# ---------------------------------------------------------------------------
 # URL builder
-# ---------------------------------------------------------------------------
 def build_url(keyword: str, page: int) -> str:
     start = page * 10
     q = keyword.replace(" ", "+")
@@ -117,19 +99,16 @@ def build_url(keyword: str, page: int) -> str:
     # id.indeed.com = versi Indonesia (redirect resmi)
     return f"https://id.indeed.com/jobs?q={q}&l={loc}&start={start}&lang=en"
 
-# ---------------------------------------------------------------------------
-# Parsing satu halaman
-# ---------------------------------------------------------------------------
+# Page parser
 def parse_page(html: str, keyword: str) -> List[Dict]:
     soup = BeautifulSoup(html, "html.parser")
     jobs = []
 
-    #  Selector terbaru berdasarkan inspeksi langsung HTML Indeed Indonesia (Jun 2025)
-    # Card utama: div.job_seen_beacon membungkus setiap lowongan
+    # Main job card selectors
     cards = soup.select("div.job_seen_beacon")
 
     if not cards:
-        # Fallback ke selector lama jika tampilan berubah
+        # Fallback selectors
         cards = (
             soup.select("li.css-5lfssm")
             or soup.select("a.tapItem")
@@ -138,8 +117,7 @@ def parse_page(html: str, keyword: str) -> List[Dict]:
         )
 
     for card in cards:
-        # ----- Judul -----
-        # <h3 class="jobTitle"><a class="jcs-JobTitle"><span title="...">JUDUL</span></a></h3>
+        # Title
         title = None
         title_el = card.select_one("h3.jobTitle a span[title]")
         if not title_el:
@@ -147,27 +125,24 @@ def parse_page(html: str, keyword: str) -> List[Dict]:
         if not title_el:
             title_el = card.select_one("h3.jobTitle a span")
         if not title_el:
-            # fallback ke h2 (desain lama)
+            # Fallback title
             title_el = card.select_one("h2.jobTitle span[title], h2.jobTitle span")
         if title_el:
             title = title_el.get("title") or title_el.get_text(strip=True)
 
-        # ----- Perusahaan -----
-        # <span data-testid="company-name">Shopee</span>
+        # Company
         company = None
         company_el = card.select_one("span[data-testid='company-name']")
         if company_el:
             company = company_el.get_text(strip=True)
 
-        # ----- Lokasi -----
-        # <div data-testid="text-location">Bangkok</div>
+        # Location
         location = None
         loc_el = card.select_one("div[data-testid='text-location']")
         if loc_el:
             location = loc_el.get_text(strip=True)
 
-        # ----- Gaji -----
-        # Tidak selalu muncul; coba beberapa selector
+        # Salary selectors
         salary_raw = None
         for sel in [
             "div.salary-snippet-container",
@@ -180,7 +155,7 @@ def parse_page(html: str, keyword: str) -> List[Dict]:
                 salary_raw = el.get_text(strip=True)
                 break
 
-        # ----- Tanggal -----
+        # Post date selectors
         post_date = None
         for sel in [
             "span[data-testid='myJobsStateDate']",
@@ -193,8 +168,7 @@ def parse_page(html: str, keyword: str) -> List[Dict]:
                 post_date = el.get_text(strip=True)
                 break
 
-        # ----- Job URL -----
-        # <a class="jcs-JobTitle" data-jk="63bc4c205f722172" href="/rc/clk?...">...
+        # Job URL selectors
         job_url = None
         link_el = card.select_one("a.jcs-JobTitle[href]")
         if not link_el:
@@ -208,7 +182,7 @@ def parse_page(html: str, keyword: str) -> List[Dict]:
             elif href.startswith("http"):
                 job_url = href
 
-        # ----- Snippet / deskripsi singkat -----
+        # Description snippet selectors
         snippet = None
         for sel in [
             "div.job-snippet",
@@ -220,7 +194,7 @@ def parse_page(html: str, keyword: str) -> List[Dict]:
                 snippet = el.get_text(separator=" ", strip=True)
                 break
 
-        # ----- Remote flag -----
+        # Remote detection
         remote_texts = ["remote", "wfh", "work from home", "kerja dari rumah"]
         all_text = ((location or "") + " " + (snippet or "")).lower()
         remote_flag = "Remote" if any(rt in all_text for rt in remote_texts) else ""
@@ -247,9 +221,7 @@ def parse_page(html: str, keyword: str) -> List[Dict]:
 
     return jobs
 
-# ---------------------------------------------------------------------------
 # Main scraping
-# ---------------------------------------------------------------------------
 def scrape_indeed():
     if not HAS_UC:
         print("ERROR: undetected-chromedriver tidak terinstall.")
@@ -265,7 +237,7 @@ def scrape_indeed():
     print(f"Headless  : {HEADLESS}")
     print()
 
-    # Load existing keywords to resume
+    # Load existing results to resume
     scraped_keywords = set()
     out_path = Path(OUTPUT_CSV)
     file_exists = out_path.exists()
@@ -283,7 +255,7 @@ def scrape_indeed():
         except Exception as e:
             print(f"[WARN] Gagal membaca file CSV lama ({e}). Memulai dari awal.")
 
-    # Initialize CSV header if file doesn't exist
+    # Create CSV header if not exists
     if not file_exists:
         with open(out_path, "w", newline="", encoding="utf-8-sig") as f:
             writer = csv.DictWriter(f, fieldnames=FIELDNAMES, delimiter=";")
@@ -292,10 +264,15 @@ def scrape_indeed():
     all_jobs_count = 0
     driver = get_driver()
 
+    producer = get_kafka_producer()
+    if producer:
+        print("Kafka Producer terhubung. Data hasil scraping akan dikirim langsung ke Kafka!")
+    else:
+        print("[WARN] Kafka Producer tidak terhubung. Data hanya akan disimpan ke CSV.")
+
     try:
         for kw_index, kw in enumerate(tqdm(KEYWORDS, desc="Keywords", unit="kw")):
             if kw in scraped_keywords:
-                # print(f"\n  -> Skipping: {kw} (Sudah di-scrape)")
                 continue
 
             kw_jobs_scraped = 0
@@ -304,10 +281,10 @@ def scrape_indeed():
                 print(f"\n  -> Fetching ({kw} hal {page}): {url}")
                 driver.get(url)
 
-                # Tunggu halaman dimuat
+                # Wait for page load
                 time.sleep(random.uniform(2, 4))
 
-                # Scroll perlahan ke bawah (agar konten lazy-load termuat)
+                # Scroll to load dynamic content
                 for _ in range(MAX_SCROLLS):
                     driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
                     time.sleep(0.2)
@@ -315,14 +292,11 @@ def scrape_indeed():
                 html = driver.page_source
                 jobs = parse_page(html, kw)
 
-                # Cek jika terblokir captcha
+                # Captcha / Cloudflare check
                 if len(jobs) == 0:
-                    if "cloudflare" in html.lower() or "security check" in html.lower() or "challenge" in html.lower() or "captcha" in html.lower() or page == 0:
-                        print("\n[WARN] Terdeteksi kemungkinan Captcha/Blokir (0 lowongan ditemukan).")
-                        print("     Silakan selesaikan verifikasi Cloudflare/Captcha di browser Chrome secara manual.")
-                        print("     Skipping verification pause (automatic resume).")
+                    if any(x in html.lower() for x in ["cloudflare", "security check", "challenge", "captcha"]) or page == 0:
+                        print("\n[WARN] Captcha or block detected.")
                         time.sleep(5)
-                        # Reload halaman setelah user verifikasi
                         driver.get(url)
                         time.sleep(3)
                         for _ in range(MAX_SCROLLS):
@@ -335,10 +309,14 @@ def scrape_indeed():
                     print("     [INFO] Tidak ada lowongan lagi untuk keyword ini pada halaman ini.")
                     break
 
-                # Tulis data baru ke CSV (Append Mode) secara real-time
+                # Write to CSV in real-time
                 with open(out_path, "a", newline="", encoding="utf-8-sig") as f:
                     writer = csv.DictWriter(f, fieldnames=FIELDNAMES, delimiter=";")
                     writer.writerows(jobs)
+
+                if producer:
+                    for job in jobs:
+                        publish_scraped_job(producer, job, "Indeed")
 
                 kw_jobs_scraped += len(jobs)
                 all_jobs_count += len(jobs)
@@ -356,6 +334,9 @@ def scrape_indeed():
     except KeyboardInterrupt:
         print("\n[INFO] Scraping dihentikan oleh pengguna.")
     finally:
+        if producer:
+            producer.flush()
+            producer.close()
         driver.quit()
 
     print(f"\n[OK] Proses selesai! Berhasil menambahkan {all_jobs_count} lowongan baru ke '{OUTPUT_CSV}'.")

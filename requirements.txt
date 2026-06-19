@@ -1,24 +1,24 @@
 # Core
-pandas
-numpy
+pandas==3.0.3
+numpy==2.4.6
 
 # Dashboard
-streamlit
-plotly
+streamlit==1.58.0
+plotly==6.8.0
 
 # Database
-pymongo
+pymongo==4.17.0
 
 # Big Data
-pyspark
+pyspark==4.1.2
 
 # Kafka Streaming
-kafka-python
+kafka-python-ng==2.2.3
 
-# Scraping (optional — untuk re-scrape data)
-selenium
-webdriver-manager
-beautifulsoup4
-undetected-chromedriver
-tqdm
-requests
+# Scraping (optional - untuk re-scrape data)
+selenium==4.44.0
+webdriver-manager==4.1.1
+beautifulsoup4==4.14.3
+undetected-chromedriver==3.5.5
+tqdm==4.67.3
+requests==2.34.2

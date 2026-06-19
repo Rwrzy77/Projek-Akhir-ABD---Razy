@@ -23,11 +23,7 @@ def clean_salary_value(val_str):
     elif "₫" in val_str or "vnd" in val_str:
         currency_multiplier = 0.65     # approximate to IDR
     
-    # Clean characters
-    # We want to extract range numbers like "6,5 jt - 7,5 jt" or "3.000.000 - 4.000.000"
-    # Normalize thousand separators and decimals:
-    # 6,5 -> 6.5
-    # 3.000.000 -> 3000000
+    # Normalize range numbers (e.g. "6,5 jt - 7,5 jt" or "3.000.000 - 4.000.000")
     
     # Split by range indicator
     parts = re.split(r'[-–—to]', val_str)
@@ -44,21 +40,13 @@ def clean_salary_value(val_str):
         elif "rb" in part or "ribu" in part or "thousand" in part or "k" in part:
             part_multiplier = 1000.0
             
-        # Extract numeric chars
-        # Replace commas with dots if followed by a multiplier (e.g. 6,5 jt -> 6.5)
-        # Otherwise remove dots (thousand separators)
-        # e.g., "rp 3.000.000" -> remove dots -> "3000000"
-        # e.g., "rp 6,5 jt" -> "6.5 jt"
+        # Clean decimals and thousand separators (e.g. "3.000.000" -> "3000000", "6,5 jt" -> "6.5")
         
-        # If it contains both dots and commas, or commas as decimals
+        # Handle commas and thousand separator dots
         if "," in part:
-            # check if it is a decimal like 6,5
             part = part.replace(".", "") # remove thousand dots if any
             part = part.replace(",", ".") # convert comma to dot for decimal
         else:
-            # might have dots as thousand separators (e.g. 3.000.000)
-            # if the dot is followed by exactly 3 digits, it's likely a thousand separator
-            # let's extract digits
             nums_only = re.findall(r'\d+', part)
             if len(nums_only) > 1 and all(len(x) == 3 for x in nums_only[1:]):
                 part = "".join(nums_only)
@@ -74,15 +62,15 @@ def clean_salary_value(val_str):
     if len(parts) == 2:
         min_val = parse_part(parts[0])
         max_val = parse_part(parts[1])
-        # If max_val is missing its multiplier but min_val has it (or vice versa), they should match
+        # Adjust mismatched multiplier ranges
         if min_val is not None and max_val is not None:
-            if min_val > max_val:  # e.g. 6.5 jt - 7.5 (parsed as 6500000 and 7.5)
-                # Multiply max_val by 1000000 if min_val has it
+            if min_val > max_val:
+                # Multiply max_val by multiplier if min_val has it
                 if "jt" in parts[0] and "jt" not in parts[1]:
                     max_val *= 1000000.0
                 elif "rb" in parts[0] and "rb" not in parts[1]:
                     max_val *= 1000.0
-            elif max_val > min_val * 1000: # e.g. 6 - 7.5 jt (parsed as 6 and 7500000)
+            elif max_val > min_val * 1000:
                 if "jt" in parts[1] and "jt" not in parts[0]:
                     min_val *= 1000000.0
                 elif "rb" in parts[1] and "rb" not in parts[0]:
@@ -214,7 +202,7 @@ try:
     df_karir_cleaned['salary_max'] = [s[1] for s in salaries]
     
     df_karir_cleaned['skills'] = df_karir['job_requirements'].fillna("")
-    df_karir_cleaned['keyword'] = df_karir['job_title'] # use job title as default keyword
+    df_karir_cleaned['keyword'] = df_karir['job_title']
     df_karir_cleaned['platform'] = "Karir.com"
     df_karir_cleaned['post_date'] = df_karir['posted_date'].fillna("Tidak dicantumkan")
     df_karir_cleaned['job_url'] = "Tidak dicantumkan"
@@ -294,7 +282,7 @@ try:
     df_indeed_cleaned['location'] = df_indeed['location']
     df_indeed_cleaned['country'] = df_indeed['location'].apply(detect_country)
     
-    # Custom job type since indeed has job types in salary_raw
+    # Check salary_raw to determine job type
     def parse_indeed_job_type(row):
         raw = str(row.get('salary_raw', '')).lower()
         if pd.isna(row.get('salary_raw')) or raw.strip() == "" or raw == "nan":

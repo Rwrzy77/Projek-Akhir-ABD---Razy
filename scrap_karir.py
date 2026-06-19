@@ -11,72 +11,49 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
+from kafka_helper import get_kafka_producer, publish_scraped_job
 
 # Suppress InsecureRequestWarning
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# ================================================================
-# KONFIGURASI - FOKUS TEKNOLOGI & INFORMASI (IT)
-# ================================================================
+# Configuration
 FILE_NAME  = "karir_dataset_master.csv"
 LIST_URL   = "https://gateway2-beta.karir.com/v2/search/opportunities"
 DETAIL_URL = "https://gateway2-beta.karir.com/v1/opportunity/detail"
 
-# Daftar keyword IT & Hybrid ekstensif untuk scraping Karir.com
+# IT & Hybrid keywords list
 KEYWORDS = [
-    # --- Software Development & Engineering (15) ---
     "Software Engineer", "Backend Developer", "Frontend Developer", "Fullstack Developer",
     "Web Developer", "Mobile Developer", "Android Developer", "iOS Developer",
     "React Developer", "Vue Developer", "Angular Developer", "Node JS Developer",
     "Python Developer", "Java Developer", "Golang Developer",
-    
-    # --- Data & AI (10) ---
     "Data Scientist", "Data Analyst", "Data Engineer", "Data Architect",
     "Machine Learning Engineer", "Artificial Intelligence Engineer", "Deep Learning Engineer",
     "Business Intelligence Developer", "Database Administrator", "Big Data Specialist",
-
-    # --- Infrastructure, Cloud, & Security (11) ---
     "DevOps Engineer", "Cloud Engineer", "Site Reliability Engineer", "System Administrator",
     "Network Engineer", "Network Administrator", "Infrastructure Engineer", "Cyber Security Analyst",
     "Information Security Specialist", "Penetration Tester", "Security Engineer",
-
-    # --- Product, Management, & Analysis (10) ---
     "Product Manager", "Project Manager IT", "Product Owner", "Scrum Master",
     "Business Analyst IT", "Systems Analyst", "IT Consultant", "Solution Architect",
     "ERP Consultant", "SAP Consultant",
-
-    # --- QA & Testing (5) ---
     "QA Engineer", "Software Tester", "Automation Test Engineer", "Quality Assurance Analyst",
     "Manual Tester",
-
-    # --- Design & Creative (5) ---
     "UI UX Designer", "UX Researcher", "Product Designer", "Graphic Designer",
     "Web Designer",
-
-    # --- Support & Tech Specialized (4) ---
     "IT Support", "Technical Support Specialist", "Game Developer", "Blockchain Developer",
-
-    # --- Marketing, Web, & Optimasi Digital (10) ---
     "Technical SEO Specialist", "Digital Marketing Analyst", "Growth Marketer", "Web Analyst",
     "E-commerce Specialist", "E-commerce Manager", "CRM Specialist", "Salesforce Administrator",
     "HubSpot Specialist", "Product Marketing Manager",
-
-    # --- Analisis Bisnis, Operasi, & Keuangan (10) ---
     "Quantitative Analyst", "Financial Risk Analyst", "Supply Chain Analyst", "Operations Analyst",
     "Business Analyst", "Business Process Analyst", "Business Process Automation Specialist", "RPA Specialist",
     "Fintech Specialist", "ERP Specialist",
-
-    # --- Penjualan Teknis, Hubungan Klien, & HR (10) ---
     "Technical Recruiter", "IT Recruiter", "Technical Sales Consultant", "Pre-Sales Consultant",
     "Solutions Consultant", "Customer Success Manager", "Technical Account Manager", "Technical Writer",
     "Documentation Specialist", "Instructional Designer",
-
-    # --- Hukum, Audit, Keamanan, & Sains Hybrid (10) ---
     "Data Privacy Officer", "IT Compliance Specialist", "IT Auditor", "GIS Analyst",
     "GIS Specialist", "Digital Forensic Examiner", "Bioinformatics Analyst", "Computational Biologist",
     "Digital Specialist", "IT Procurement Specialist"
 ]
-# ================================================================
 
 def get_guest_session():
     print("[SETUP] Memperoleh session baru dari Karir.com...")
@@ -94,10 +71,10 @@ def get_guest_session():
         driver.get("https://karir.com/search-lowongan")
         time.sleep(5)
         
-        # Cari token di localStorage
+        # Get token from localStorage
         token = driver.execute_script("return window.localStorage.getItem('token');")
         if not token:
-            # Fallback cari key lain yang mirip jwt
+            # Fallback to search keys similar to jwt
             all_keys = driver.execute_script("return Object.keys(window.localStorage);") or []
             for k in all_keys:
                 if "token" in k.lower():
@@ -143,6 +120,12 @@ def build_headers(token=None):
 token, session_cookies = get_guest_session()
 headers = build_headers(token)
 
+producer = get_kafka_producer()
+if producer:
+    print("Kafka Producer terhubung. Data hasil scraping akan dikirim langsung ke Kafka!")
+else:
+    print("[WARN] Kafka Producer tidak terhubung. Data hanya akan disimpan ke CSV.")
+
 all_jobs = []
 print("=" * 60)
 print("Memulai scraping Karir.com (Fokus IT Keywords)")
@@ -151,16 +134,16 @@ print("=" * 60)
 for keyword in KEYWORDS:
     print(f"\nSearching Keyword: '{keyword}'")
     page = 1
-    limit = 20 # HARUS 20 karena API Karir membatasi maksimal 20 data per request
+    limit = 20  # API limit is 20
     
-    while page <= 30: # Naikkan drastis dari 5 menjadi 30 halaman per keyword
+    while page <= 30:
         offset = (page - 1) * limit
         payload = {
             "is_opportunity": True,
             "limit": limit,
             "offset": offset,
             "sort_order": "newest",
-            "q": keyword # Menambahkan parameter pencarian 'q'
+            "q": keyword  # Search query parameter
         }
         
         try:
@@ -180,10 +163,9 @@ for keyword in KEYWORDS:
             print(f"  Hal {page}: +{len(opportunities)} job", end=" ", flush=True)
             
             for job in opportunities:
-                # Filter manual jika 'q' diabaikan API (opsional tapi aman untuk fokus IT)
+                # Filter job title if query ignored
                 title = job.get("job_position", "").lower()
                 if not any(k.lower() in title for k in [keyword, "it", "tech", "data", "engineer", "dev"]):
-                    # Tetap ambil tapi beri tanda atau biarkan jika ingin data sebanyak mungkin
                     pass
                 
                 job_id = job.get("id")
@@ -206,6 +188,8 @@ for keyword in KEYWORDS:
                         "source_platform": "Karir.com",
                     }
                     all_jobs.append(job_data)
+                    if producer:
+                        publish_scraped_job(producer, job_data, "Karir.com")
                     time.sleep(0.1)
                 except:
                     continue
@@ -218,6 +202,10 @@ for keyword in KEYWORDS:
             break
 
 # Saving Data
+if producer:
+    producer.flush()
+    producer.close()
+
 if all_jobs:
     df_baru = pd.DataFrame(all_jobs)
     if os.path.exists(FILE_NAME):

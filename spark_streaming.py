@@ -1,16 +1,4 @@
-"""
-Spark Structured Streaming — Kafka Consumer
-============================================
-Membaca event lowongan kerja dari Kafka, melakukan agregasi real-time,
-dan menulis hasil ke stream_outputs/ untuk dashboard.
-
-Contoh:
-  python spark_streaming.py
-
-Prasyarat:
-  1. docker compose up -d
-  2. python kafka_producer.py   (terminal terpisah, atau sudah ada data di topic)
-"""
+"""Spark Structured Streaming Kafka Consumer."""
 
 import json
 import os
@@ -175,7 +163,7 @@ def main():
     os.makedirs(SPARK_CHECKPOINT_DIR, exist_ok=True)
 
     print("=" * 60)
-    print("  ⚡ SPARK STRUCTURED STREAMING — KAFKA CONSUMER")
+    print("  SPARK STRUCTURED STREAMING — KAFKA CONSUMER")
     print("=" * 60)
     print(f"  Broker  : {KAFKA_BOOTSTRAP_SERVERS}")
     print(f"  Topic   : {KAFKA_TOPIC_JOBS}")
@@ -218,7 +206,7 @@ def main():
         .start()
     )
 
-    # Windowed aggregation: jobs per platform per 1-minute tumbling window
+    # Windowed aggregation: 1-minute tumbling window
     windowed = (
         jobs_df.withWatermark("event_ts", "2 minutes")
         .groupBy(window(col("event_ts"), "1 minute"), col("platform"))
@@ -244,13 +232,13 @@ def main():
     try:
         spark.streams.awaitAnyTermination()
     except KeyboardInterrupt:
-        print("\n⏹️  Menghentikan streaming queries...")
+        print("\nMenghentikan streaming queries...")
     finally:
         for q in [query_platform, query_keyword, query_recent, query_window]:
             if q.isActive:
                 q.stop()
         spark.stop()
-        print("✅ Spark session dihentikan.")
+        print("Spark session dihentikan.")
 
 
 if __name__ == "__main__":

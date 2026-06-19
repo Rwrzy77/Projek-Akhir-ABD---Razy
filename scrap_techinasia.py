@@ -1,10 +1,9 @@
 import requests
 import time
 import pandas as pd
+from kafka_helper import get_kafka_producer, publish_scraped_job
 
-# ==========================================
-# KONFIGURASI ALGOLIA TECH IN ASIA
-# ==========================================
+# Algolia configuration
 URL = "https://219wx3mpv4-dsn.algolia.net/1/indexes/*/queries"
 LIMIT_PER_PAGE = 50
 
@@ -12,7 +11,7 @@ LIMIT_PER_PAGE = 50
 params = {
     "x-algolia-agent": "Algolia for vanilla JavaScript 3.30.0;JS Helper 2.26.1",
     "x-algolia-application-id": "219WX3MPV4",
-    # PASTIKAN API KEY INI MASIH AKTIF SAAT KAMU MENJALANKAN SCRIPT
+    # Ensure API key is active
     "x-algolia-api-key": "b528008a75dc1c4402bfe0d8db8b3f8e" 
 }
 
@@ -24,64 +23,47 @@ headers = {
     "Referer": "https://www.techinasia.com/"
 }
 
-# ==========================================
-# DAFTAR "JARING" KATA KUNCI IT & HYBRID
-# ==========================================
+# IT & Hybrid keywords list
 it_keywords = [
-    # --- Software Development & Engineering (15) ---
     "Software Engineer", "Backend Developer", "Frontend Developer", "Fullstack Developer",
     "Web Developer", "Mobile Developer", "Android Developer", "iOS Developer",
     "React Developer", "Vue Developer", "Angular Developer", "Node JS Developer",
     "Python Developer", "Java Developer", "Golang Developer",
-    
-    # --- Data & AI (10) ---
     "Data Scientist", "Data Analyst", "Data Engineer", "Data Architect",
     "Machine Learning Engineer", "Artificial Intelligence Engineer", "Deep Learning Engineer",
     "Business Intelligence Developer", "Database Administrator", "Big Data Specialist",
-
-    # --- Infrastructure, Cloud, & Security (11) ---
     "DevOps Engineer", "Cloud Engineer", "Site Reliability Engineer", "System Administrator",
     "Network Engineer", "Network Administrator", "Infrastructure Engineer", "Cyber Security Analyst",
     "Information Security Specialist", "Penetration Tester", "Security Engineer",
-
-    # --- Product, Management, & Analysis (10) ---
     "Product Manager", "Project Manager IT", "Product Owner", "Scrum Master",
     "Business Analyst IT", "Systems Analyst", "IT Consultant", "Solution Architect",
     "ERP Consultant", "SAP Consultant",
-
-    # --- QA & Testing (5) ---
     "QA Engineer", "Software Tester", "Automation Test Engineer", "Quality Assurance Analyst",
     "Manual Tester",
-
-    # --- Design & Creative (5) ---
     "UI UX Designer", "UX Researcher", "Product Designer", "Graphic Designer",
     "Web Designer",
-
-    # --- Support & Tech Specialized (4) ---
     "IT Support", "Technical Support Specialist", "Game Developer", "Blockchain Developer",
-
-    # --- Marketing, Web, & Optimasi Digital (10) ---
     "Technical SEO Specialist", "Digital Marketing Analyst", "Growth Marketer", "Web Analyst",
     "E-commerce Specialist", "E-commerce Manager", "CRM Specialist", "Salesforce Administrator",
     "HubSpot Specialist", "Product Marketing Manager",
-
-    # --- Analisis Bisnis, Operasi, & Keuangan (10) ---
     "Quantitative Analyst", "Financial Risk Analyst", "Supply Chain Analyst", "Operations Analyst",
     "Business Analyst", "Business Process Analyst", "Business Process Automation Specialist", "RPA Specialist",
     "Fintech Specialist", "ERP Specialist",
-
-    # --- Penjualan Teknis, Hubungan Klien, & HR (10) ---
     "Technical Recruiter", "IT Recruiter", "Technical Sales Consultant", "Pre-Sales Consultant",
     "Solutions Consultant", "Customer Success Manager", "Technical Account Manager", "Technical Writer",
     "Documentation Specialist", "Instructional Designer",
-
-    # --- Hukum, Audit, Keamanan, & Sains Hybrid (10) ---
     "Data Privacy Officer", "IT Compliance Specialist", "IT Auditor", "GIS Analyst",
     "GIS Specialist", "Digital Forensic Examiner", "Bioinformatics Analyst", "Computational Biologist",
     "Digital Specialist", "IT Procurement Specialist"
 ]
 
 all_jobs = []
+
+producer = get_kafka_producer()
+if producer:
+    print("Kafka Producer terhubung. Data hasil scraping akan dikirim langsung ke Kafka!")
+else:
+    print("[WARN] Kafka Producer tidak terhubung. Data hanya akan disimpan ke CSV.")
 
 print("=" * 60)
 print("MEMULAI PENGAMBILAN DATA IT SECARA MASIF...")
@@ -95,7 +77,7 @@ for keyword in it_keywords:
         payload = {
             "requests": [
                 {
-                    # INILAH KUNCI UTAMANYA: Menggunakan index "job_postings"
+                    # Use job_postings index
                     "indexName": "job_postings", 
                     "params": f"query={keyword}&hitsPerPage={LIMIT_PER_PAGE}&page={page}"
                 }
@@ -116,7 +98,7 @@ for keyword in it_keywords:
             print(f"     Halaman {page:2d} | Menemukan {len(hits)} lowongan...")
             
             for item in hits:
-                # Mengambil data dengan aman menyesuaikan struktur JSON terbaru
+                # Extract fields safely from JSON
                 job_title = item.get("title") or item.get("name") or "Tidak dicantumkan"
                 
                 company_data = item.get("company") or {}
@@ -141,9 +123,11 @@ for keyword in it_keywords:
                     "source_platform": "Tech In Asia"
                 }
                 all_jobs.append(job_data)
+                if producer:
+                    publish_scraped_job(producer, job_data, "Tech In Asia")
                 
             page += 1
-            time.sleep(1) # Jeda agar tidak dianggap serangan DDoS
+            time.sleep(1) # Delay to prevent rate limit
 
         except requests.exceptions.HTTPError as e:
             if res.status_code == 403:
@@ -155,12 +139,14 @@ for keyword in it_keywords:
             print(f"     [ERROR] Terjadi kendala: {e}")
             break
 
-# ==========================================
-# SIMPAN & BERSIHKAN DATA
-# ==========================================
+# Clean and save data
+if producer:
+    producer.flush()
+    producer.close()
+
 if all_jobs:
     df = pd.DataFrame(all_jobs)
-    # Hapus duplikat karena banyak keyword yang bisa memunculkan lowongan yang sama
+    # Remove duplicates
     df_clean = df.drop_duplicates(subset=['job_title', 'company_name'])
     
     file_name = "techinasia_it_massive.csv"

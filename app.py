@@ -15,15 +15,13 @@ from streaming_config import (
     STREAM_SUMMARY,
 )
 
-# ============================================================
-#   MONGODB CONNECTION
-# ============================================================
+# MongoDB connection
 MONGO_URI = "mongodb://localhost:27017/"
 DB_NAME = "bigdata_jobs"
 COLLECTION_NAME = "it_jobs"
 
 def get_mongo_client():
-    """Koneksi ke MongoDB, return None jika gagal"""
+    """Connect to MongoDB"""
     try:
         from pymongo import MongoClient
         client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=3000)
@@ -33,7 +31,7 @@ def get_mongo_client():
         return None
 
 def load_from_mongodb():
-    """Load data dari MongoDB dan konversi ke DataFrame"""
+    """Load data from MongoDB"""
     client = get_mongo_client()
     if client is None:
         return None, None
@@ -41,18 +39,18 @@ def load_from_mongodb():
     db = client[DB_NAME]
     collection = db[COLLECTION_NAME]
     
-    # Cek apakah collection punya data
+    # Check collection content
     if collection.count_documents({}) == 0:
         client.close()
         return None, None
     
-    # Ambil semua dokumen
+    # Get documents
     cursor = collection.find({}, {"_id": 0, "imported_at": 0})
     docs = list(cursor)
     
     df = pd.DataFrame(docs)
     
-    # Flatten salary nested document
+    # Flatten salary fields
     if 'salary' in df.columns:
         df['salary_min'] = df['salary'].apply(lambda x: x.get('min') if isinstance(x, dict) else None)
         df['salary_max'] = df['salary'].apply(lambda x: x.get('max') if isinstance(x, dict) else None)
@@ -68,17 +66,15 @@ def mongo_aggregate(collection, pipeline):
     except Exception:
         return []
 
-# ============================================================
-#   PAGE CONFIG & CSS
-# ============================================================
+# Page config and CSS
 st.set_page_config(
     page_title="Big Data IT Job Market Dashboard",
-    page_icon="💼",
+    page_icon=None,
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Premium Custom CSS
+# Custom CSS
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap');
@@ -206,22 +202,20 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ============================================================
-#   DATA LOADING
-# ============================================================
+# Data loading
 @st.cache_data(ttl=300)
 def load_data():
-    """Load data: prioritas MongoDB > CSV"""
+    """Load data (MongoDB > CSV)"""
     source = "csv"
     collection_ref = None
     
-    # Coba MongoDB dulu
+    # Try MongoDB
     df_mongo, coll = load_from_mongodb()
     if df_mongo is not None and not df_mongo.empty:
         source = "mongodb"
         return df_mongo, source
     
-    # Fallback ke CSV
+    # Fallback to CSV
     if os.path.exists("merged_it_jobs.csv"):
         df = pd.read_csv("merged_it_jobs.csv", delimiter=";", encoding="utf-8-sig", low_memory=False)
         return df, source
@@ -243,7 +237,7 @@ def load_spark_outputs():
 
 @st.cache_data(ttl=10)
 def load_stream_outputs():
-    """Load real-time streaming outputs dari Spark Structured Streaming."""
+    """Load streaming outputs"""
     stream_data = {}
     summary = None
 
@@ -268,7 +262,7 @@ def load_stream_outputs():
     return stream_data, summary
 
 def is_stream_active(summary):
-    """Stream dianggap aktif jika summary diupdate < 2 menit terakhir."""
+    """Check if stream is active"""
     if not summary or "last_updated" not in summary:
         return False
     try:
@@ -278,9 +272,7 @@ def is_stream_active(summary):
     except (ValueError, TypeError):
         return False
 
-# ============================================================
-#   MONGODB AGGREGATION HELPERS
-# ============================================================
+# MongoDB aggregation helpers
 def mongo_get_job_demand(collection, limit=15):
     pipeline = [
         {"$group": {"_id": "$keyword", "total_jobs": {"$sum": 1}}},
@@ -348,7 +340,7 @@ def mongo_get_top_companies(collection, limit=10):
     return pd.DataFrame(mongo_aggregate(collection, pipeline))
 
 def mongo_search_jobs(collection, query=None, platforms=None, countries=None, min_salary=0):
-    """Search jobs with MongoDB queries"""
+    """Search jobs"""
     match_filter = {}
     
     if platforms:
@@ -379,12 +371,10 @@ def mongo_search_jobs(collection, query=None, platforms=None, countries=None, mi
         df.drop(columns=['salary'], inplace=True)
     return df
 
-# ============================================================
-#   MAIN APP
-# ============================================================
+# Main app
 
 # Header
-st.markdown("<h1 style='text-align: center; margin-bottom: 5px;'>📊 <span class='gradient-text'>Big Data IT Job Market Dashboard</span></h1>", unsafe_allow_html=True)
+st.markdown("<h1 style='text-align: center; margin-bottom: 5px;'> <span class='gradient-text'>Big Data IT Job Market Dashboard</span></h1>", unsafe_allow_html=True)
 st.markdown("<p style='text-align: center; color: #94a3b8; font-size: 16px; margin-bottom: 10px;'>Analisis Terintegrasi Lowongan Kerja IT dari 5 Platform: Glints, LinkedIn, Indeed, Karir.com & Tech in Asia</p>", unsafe_allow_html=True)
 
 # Load data
@@ -395,7 +385,7 @@ has_spark_output = len(spark_data) == 4
 has_stream_output = len(stream_data) > 0
 stream_is_live = is_stream_active(stream_summary)
 
-# Get MongoDB collection for aggregation queries
+# Get MongoDB collection
 mongo_client = get_mongo_client()
 mongo_coll = None
 if mongo_client:
@@ -408,38 +398,36 @@ if df_raw.empty:
 # Status badges
 badges_html = '<div class="status-bar">'
 if data_source == "mongodb":
-    badges_html += '<span class="mongo-badge">🍃 MongoDB Connected</span>'
+    badges_html += '<span class="mongo-badge"> MongoDB Connected</span>'
 else:
-    badges_html += '<span class="csv-badge">📄 CSV Mode</span>'
+    badges_html += '<span class="csv-badge"> CSV Mode</span>'
 if has_spark_output:
-    badges_html += '<span class="spark-badge">⚡ Spark Data Ready</span>'
+    badges_html += '<span class="spark-badge"> Spark Data Ready</span>'
 if stream_is_live:
-    badges_html += '<span class="kafka-badge">📡 Kafka Stream LIVE</span>'
+    badges_html += '<span class="kafka-badge"> Kafka Stream LIVE</span>'
 elif has_stream_output:
-    badges_html += '<span class="kafka-badge">📡 Stream Data Available</span>'
+    badges_html += '<span class="kafka-badge"> Stream Data Available</span>'
 badges_html += '</div>'
 st.markdown(badges_html, unsafe_allow_html=True)
 
 # Sidebar
-st.sidebar.markdown("<h3 style='margin-top: 0;'>⚙️ Filter & Navigasi</h3>", unsafe_allow_html=True)
+st.sidebar.markdown("<h3 style='margin-top: 0;'> Filter & Navigasi</h3>", unsafe_allow_html=True)
 
 if data_source == "mongodb":
-    st.sidebar.success("🍃 Data dari **MongoDB**")
+    st.sidebar.success(" Data dari **MongoDB**")
     st.sidebar.caption(f"Database: `{DB_NAME}`\nCollection: `{COLLECTION_NAME}`")
 else:
-    st.sidebar.info("📄 Data dari **CSV** (MongoDB tidak tersedia)")
+    st.sidebar.info(" Data dari **CSV** (MongoDB tidak tersedia)")
 
 st.sidebar.markdown("---")
 st.sidebar.caption(f"Total records: **{len(df_raw):,}**")
 st.sidebar.caption(f"Last refresh: {datetime.now().strftime('%H:%M:%S')}")
 
-if st.sidebar.button("🔄 Refresh Data"):
+if st.sidebar.button(" Refresh Data"):
     st.cache_data.clear()
     st.rerun()
 
-# ============================================================
-#   METRICS ROW
-# ============================================================
+# Metrics
 col1, col2, col3, col4 = st.columns(4)
 
 total_jobs = len(df_raw)
@@ -473,7 +461,7 @@ with col1:
     <div class="premium-card">
         <div class="metric-label">Total Lowongan Kerja</div>
         <div class="metric-value">{total_jobs:,}</div>
-        <div style="font-size: 12px; color: #10b981;">🟢 5 Platform Terintegrasi</div>
+        <div style="font-size: 12px; color: #10b981;"> 5 Platform Terintegrasi</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -504,35 +492,31 @@ with col4:
     </div>
     """, unsafe_allow_html=True)
 
-# ============================================================
-#   TABS
-# ============================================================
+# Tabs
 tab_charts, tab_finder, tab_mongo, tab_stream = st.tabs([
-    "📈 Analisis Tren & Visualisasi",
-    "🔍 Interactive Job Finder",
-    "🍃 MongoDB Analytics",
-    "📡 Real-time Streaming"
+    "Analisis Tren & Visualisasi",
+    "Interactive Job Finder",
+    "MongoDB Analytics",
+    "Real-time Streaming"
 ])
 
-# ============================================================
-#   TAB 1: ANALISIS TREN
-# ============================================================
+# Tab 1: Trend analysis
 with tab_charts:
     col_left, col_right = st.columns(2)
     
     with col_left:
-        st.subheader("🔥 Tren Kategori / Keyword Pekerjaan IT")
+        st.subheader(" Tren Kategori / Keyword Pekerjaan IT")
         
         if has_spark_output:
             df_demand = spark_data['job_demand'].head(15)
-            st.caption("⚡ Diproses menggunakan Spark Session")
+            st.caption(" Diproses menggunakan Spark Session")
         elif mongo_coll and data_source == "mongodb":
             df_demand = mongo_get_job_demand(mongo_coll, 15)
-            st.caption("🍃 Diproses menggunakan MongoDB Aggregation")
+            st.caption(" Diproses menggunakan MongoDB Aggregation")
         else:
             df_demand = df_raw['keyword'].value_counts().reset_index().head(15)
             df_demand.columns = ['keyword', 'total_jobs']
-            st.caption("ℹ️ Diproses menggunakan Pandas fallback")
+            st.caption(" Diproses menggunakan Pandas fallback")
             
         if not df_demand.empty:
             fig_demand = px.bar(
@@ -552,7 +536,7 @@ with tab_charts:
             )
             st.plotly_chart(fig_demand, use_container_width=True)
 
-        st.subheader("🌐 Distribusi Loker Berdasarkan Negara")
+        st.subheader(" Distribusi Loker Berdasarkan Negara")
         if has_spark_output:
             df_country = spark_data['jobs_by_country'].head(10)
         elif mongo_coll and data_source == "mongodb":
@@ -577,7 +561,7 @@ with tab_charts:
             st.plotly_chart(fig_country, use_container_width=True)
 
     with col_right:
-        st.subheader("💰 Rata-rata Gaji Berdasarkan Role IT")
+        st.subheader(" Rata-rata Gaji Berdasarkan Role IT")
         if has_spark_output:
             df_sal = spark_data['salary_by_role'].head(10)
         elif mongo_coll and data_source == "mongodb":
@@ -621,7 +605,7 @@ with tab_charts:
         else:
             st.info("Tidak ada data gaji yang tersedia.")
         
-        st.subheader("📊 Distribusi Lowongan per Platform")
+        st.subheader(" Distribusi Lowongan per Platform")
         if has_spark_output:
             df_plat = spark_data['jobs_by_platform']
         elif mongo_coll and data_source == "mongodb":
@@ -654,16 +638,14 @@ with tab_charts:
             )
             st.plotly_chart(fig_plat, use_container_width=True)
 
-# ============================================================
-#   TAB 2: JOB FINDER
-# ============================================================
+# Tab 2: Job finder
 with tab_finder:
-    st.subheader("🔍 Pencarian & Filter Database Lowongan Kerja IT")
+    st.subheader(" Pencarian & Filter Database Lowongan Kerja IT")
     
     use_mongo_search = data_source == "mongodb" and mongo_coll is not None
     
     if use_mongo_search:
-        st.caption("🍃 Pencarian menggunakan MongoDB Text Search & Indexed Queries")
+        st.caption(" Pencarian menggunakan MongoDB Text Search & Indexed Queries")
     
     search_query = st.text_input("Cari kata kunci posisi atau nama perusahaan:", "", key="job_search")
     
@@ -790,22 +772,20 @@ with tab_finder:
     else:
         st.warning("Tidak ada lowongan yang cocok dengan filter.")
 
-# ============================================================
-#   TAB 3: MONGODB ANALYTICS
-# ============================================================
+# Tab 3: MongoDB analytics
 with tab_mongo:
     if mongo_coll is None:
-        st.warning("🔌 MongoDB tidak terhubung. Pastikan MongoDB berjalan di `localhost:27017`.")
+        st.warning(" MongoDB tidak terhubung. Pastikan MongoDB berjalan di `localhost:27017`.")
         st.info("Jalankan `python import_to_mongodb.py` untuk import data ke MongoDB.")
     else:
-        st.subheader("🍃 MongoDB Aggregation Analytics")
+        st.subheader(" MongoDB Aggregation Analytics")
         st.caption("Semua analitik di tab ini dijalankan langsung via MongoDB Aggregation Pipeline")
         
         m_col1, m_col2 = st.columns(2)
         
         with m_col1:
             # Top Companies
-            st.markdown("#### 🏢 Top 10 Perusahaan (Paling Banyak Merekrut)")
+            st.markdown("####  Top 10 Perusahaan (Paling Banyak Merekrut)")
             df_companies = mongo_get_top_companies(mongo_coll, 10)
             if not df_companies.empty:
                 fig_comp = px.bar(
@@ -827,7 +807,7 @@ with tab_mongo:
                 st.plotly_chart(fig_comp, use_container_width=True)
             
             # Job Type Distribution
-            st.markdown("#### 📋 Distribusi Tipe Pekerjaan")
+            st.markdown("####  Distribusi Tipe Pekerjaan")
             df_jtype = mongo_get_by_job_type(mongo_coll)
             if not df_jtype.empty:
                 fig_jtype = px.pie(
@@ -846,7 +826,7 @@ with tab_mongo:
 
         with m_col2:
             # Platform vs Country Heatmap
-            st.markdown("#### 🗺️ Platform vs Negara (Heatmap)")
+            st.markdown("####  Platform vs Negara (Heatmap)")
             pipeline_heatmap = [
                 {"$group": {
                     "_id": {"platform": "$platform", "country": "$country"},
@@ -880,7 +860,7 @@ with tab_mongo:
                 st.plotly_chart(fig_heat, use_container_width=True)
             
             # Salary Range per Platform
-            st.markdown("#### 💰 Rata-rata Gaji per Platform")
+            st.markdown("####  Rata-rata Gaji per Platform")
             pipeline_sal_plat = [
                 {"$match": {"salary.avg": {"$ne": None}}},
                 {"$group": {
@@ -929,7 +909,7 @@ with tab_mongo:
         
         # MongoDB Query Explorer
         st.markdown("---")
-        st.subheader("🔧 MongoDB Query Explorer")
+        st.subheader(" MongoDB Query Explorer")
         st.caption("Jalankan custom aggregation pipeline langsung di dashboard")
         
         query_preset = st.selectbox("Pilih preset query:", [
@@ -992,17 +972,15 @@ with tab_mongo:
         else:
             st.info("Pilih salah satu preset query di atas, atau gunakan MongoDB Compass/Shell untuk custom queries.")
 
-# ============================================================
-#   TAB 4: REAL-TIME STREAMING (Kafka + Spark Streaming)
-# ============================================================
+# Tab 4: Real-time streaming
 with tab_stream:
-    st.subheader("📡 Real-time Streaming Pipeline")
+    st.subheader(" Real-time Streaming Pipeline")
     st.caption("Kafka → Spark Structured Streaming → Dashboard (auto-refresh setiap 10 detik)")
 
     if stream_is_live:
-        st.success("🟢 Stream aktif — data sedang diproses secara real-time")
+        st.success(" Stream aktif — data sedang diproses secara real-time")
     elif has_stream_output:
-        st.warning("🟡 Data stream tersedia, tetapi tidak ada update baru dalam 2 menit terakhir")
+        st.warning(" Data stream tersedia, tetapi tidak ada update baru dalam 2 menit terakhir")
     else:
         st.info("Pipeline streaming belum berjalan. Ikuti langkah di bawah untuk memulai.")
 
@@ -1043,7 +1021,7 @@ with tab_stream:
         """, unsafe_allow_html=True)
 
     if not has_stream_output:
-        st.markdown("#### 🚀 Cara Menjalankan Pipeline Streaming")
+        st.markdown("####  Cara Menjalankan Pipeline Streaming")
         st.code("""# Terminal 1 — Start Kafka
 docker compose up -d
 
@@ -1061,7 +1039,7 @@ streamlit run app.py""", language="bash")
 
         with chart_col:
             if "platform_counts" in stream_data and not stream_data["platform_counts"].empty:
-                st.markdown("#### 📊 Event per Platform (Live)")
+                st.markdown("####  Event per Platform (Live)")
                 df_plat_stream = stream_data["platform_counts"]
                 fig_stream_plat = px.bar(
                     df_plat_stream,
@@ -1080,7 +1058,7 @@ streamlit run app.py""", language="bash")
                 st.plotly_chart(fig_stream_plat, use_container_width=True)
 
             if "keyword_counts" in stream_data and not stream_data["keyword_counts"].empty:
-                st.markdown("#### 🔑 Top Keyword (Live Stream)")
+                st.markdown("####  Top Keyword (Live Stream)")
                 df_kw_stream = stream_data["keyword_counts"].head(10)
                 fig_stream_kw = px.bar(
                     df_kw_stream,
@@ -1102,7 +1080,7 @@ streamlit run app.py""", language="bash")
 
         with table_col:
             if "recent_jobs" in stream_data and not stream_data["recent_jobs"].empty:
-                st.markdown("#### 🆕 Lowongan Terbaru (Stream)")
+                st.markdown("####  Lowongan Terbaru (Stream)")
                 df_recent = stream_data["recent_jobs"].copy()
                 if "salary_min" in df_recent.columns:
                     def fmt_sal_stream(val):
@@ -1127,11 +1105,11 @@ streamlit run app.py""", language="bash")
                     }
                 )
 
-        if st.button("🔄 Refresh Stream Data", key="refresh_stream"):
+        if st.button(" Refresh Stream Data", key="refresh_stream"):
             st.cache_data.clear()
             st.rerun()
 
-        with st.expander("ℹ️ Arsitektur Pipeline"):
+        with st.expander("Arsitektur Pipeline"):
             st.markdown("""
 ```
 Scraper / CSV  →  kafka_producer.py  →  Kafka (it-jobs-stream)

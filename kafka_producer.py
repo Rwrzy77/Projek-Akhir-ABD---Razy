@@ -1,20 +1,4 @@
-"""
-Kafka Producer — IT Job Market Streaming
-==========================================
-Mempublish event lowongan kerja ke Kafka topic.
-
-Mode:
-  replay  — baca merged_it_jobs.csv dan kirim ke Kafka (simulasi real-time, default)
-  single  — kirim satu event JSON dari command line (untuk testing)
-
-Contoh:
-  python kafka_producer.py
-  python kafka_producer.py --delay 0.1 --limit 500
-  python kafka_producer.py --csv merged_it_jobs.csv
-
-Prasyarat:
-  docker compose up -d
-"""
+"""Kafka Producer to publish IT job events to Kafka topic."""
 
 import argparse
 import json
@@ -43,7 +27,7 @@ def create_producer():
             retries=3,
         )
     except NoBrokersAvailable:
-        print(f"❌ Kafka tidak tersedia di {KAFKA_BOOTSTRAP_SERVERS}")
+        print(f"[ERROR] Kafka tidak tersedia di {KAFKA_BOOTSTRAP_SERVERS}")
         print("   Jalankan: docker compose up -d")
         sys.exit(1)
 
@@ -82,7 +66,7 @@ def publish_event(producer: KafkaProducer, event: dict):
 
 def replay_csv(csv_path: str, delay: float, limit: int | None):
     print("=" * 60)
-    print("  🚀 KAFKA PRODUCER — REPLAY MODE")
+    print("  KAFKA PRODUCER — REPLAY MODE")
     print("=" * 60)
     print(f"  Broker  : {KAFKA_BOOTSTRAP_SERVERS}")
     print(f"  Topic   : {KAFKA_TOPIC_JOBS}")
@@ -104,15 +88,15 @@ def replay_csv(csv_path: str, delay: float, limit: int | None):
             publish_event(producer, event)
             sent += 1
             if sent % 100 == 0 or sent == total:
-                print(f"  📤 Terkirim: {sent:,}/{total:,}")
+                print(f"  Terkirim: {sent:,}/{total:,}")
             time.sleep(delay)
     except KeyboardInterrupt:
-        print("\n  ⏹️  Dihentikan oleh user.")
+        print("\n  Dihentikan oleh user.")
     finally:
         producer.flush()
         producer.close()
 
-    print(f"\n✅ Selesai. {sent:,} event dipublish ke topic '{KAFKA_TOPIC_JOBS}'.")
+    print(f"\nSelesai. {sent:,} event dipublish ke topic '{KAFKA_TOPIC_JOBS}'.")
 
 
 def main():
